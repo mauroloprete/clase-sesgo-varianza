@@ -1,0 +1,1213 @@
+---
+title: "Sobreajuste y la disyuntiva sesgo-varianza"
+subtitle: "Validación mediante partición train/test <br><br> LLAMADO 042/25"
+format:
+  revealjs:
+    theme: style.scss
+    logo: logo-fcea.png
+    incremental: false
+    multiplex: false
+    height: 900
+    width: 1600
+    self-contained: true
+    slide-number: c/t
+    smaller: true
+    scrollable: true
+    menu:
+      side: right
+      numbers: true
+    code-overflow: wrap
+    code-line-numbers: false
+    fig-align: center
+author: "Mauro Loprete"
+institute: "IESTA — Facultad de Ciencias Económicas y de Administración — UDELAR"
+date: "2026-06-17"
+execute:
+  echo: false
+  warning: false
+  message: false
+  fig-width: 11
+  fig-height: 6
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+set.seed(2026)
+
+theme_clase <- theme_minimal(base_size = 18) +
+    theme(
+        plot.title = element_text(
+            face = "bold",
+            size = 22,
+            color = "#0072B2",
+            margin = margin(b = 8)
+        ),
+        plot.subtitle = element_text(
+            size = 14,
+            color = "#64748b",
+            margin = margin(b = 12)
+        ),
+        axis.title = element_text(size = 16),
+        axis.text = element_text(size = 14),
+        legend.text = element_text(size = 15),
+        legend.title = element_blank(),
+        legend.position = "bottom",
+        legend.key.width = unit(2, "cm"),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(color = "#f1f5f9", linewidth = 0.4),
+        plot.background = element_rect(fill = "white", color = NA),
+        panel.background = element_rect(fill = "white", color = NA),
+        strip.text = element_text(size = 15, face = "bold", color = "#0072B2")
+    )
+theme_set(theme_clase)
+
+# Paleta colorblind-friendly (Okabe-Ito)
+col_train <- "#56B4E9" # azul claro - training
+col_test <- "#D55E00" # bermellón - test MSE
+col_sesgo <- "#0072B2" # azul - sesgo²
+col_var <- "#E69F00" # amarillo/dorado - varianza
+col_epe <- "#009E73" # verde azulado - EPE/test
+col_irred <- "#999999" # gris - irreducible
+col_true <- "#000000" # negro - f verdadera
+
+# ─── Funciones verdaderas (estilo ISLR Fig 2.9-2.11) ─────────────────────
+# Escenario 1: casi lineal (Fig 2.9)
+f1 <- function(x) 0.8 * x + 0.2 * sin(2 * pi * x)
+
+# Escenario 2: moderadamente no lineal (Fig 2.10)
+f2 <- function(x) sin(2 * pi * x)
+
+# Escenario 3: altamente no lineal (Fig 2.11)
+f3 <- function(x) sin(4 * pi * x) * exp(-2 * x) + 0.5 * x^2
+
+sigma_eps <- 0.25 # ruido
+n_train <- 50
+n_test <- 1000
+```
+
+## Material disponible
+
+:::: {.columns}
+::: {.column width="50%"}
+![](qr_repo.png){width=70%}
+:::
+::: {.column width="50%"}
+
+**Todo el material de la clase:**
+
+[mauroloprete.github.io/clase-sesgo-varianza](https://mauroloprete.github.io/clase-sesgo-varianza/)
+
+- Diapositivas
+- Laboratorio (con y sin soluciones)
+- Código fuente (.qmd)
+
+:::
+::::
+
+---
+
+# Motivación {background-color="#2c3e50"}
+
+## El problema central del aprendizaje estadístico
+
+Tenemos $n$ observaciones $(x_1, y_1), \ldots, (x_n, y_n)$ y queremos construir un modelo $\hat{f}$ que **prediga bien para datos nuevos**, no vistos durante el ajuste.
+
+. . .
+
+**Pregunta clave**: ¿Cómo sabemos si nuestro modelo va a funcionar con datos futuros?
+
+. . .
+
+::: {.callout-warning}
+## Advertencia
+Un modelo puede ajustar **perfectamente** los datos de entrenamiento y aun así predecir **pésimamente** datos nuevos.
+:::
+
+---
+
+## Ejemplo: tres modelos, mismos datos
+
+```{r ejemplo-motivador}
+# Generar datos con f2 (sinusoidal)
+x_ej <- sort(runif(n_train, 0, 1))
+y_ej <- f2(x_ej) + rnorm(n_train, sd = sigma_eps)
+df_ej <- data.frame(x = x_ej, y = y_ej)
+
+# Tres niveles de flexibilidad con smoothing splines
+x_grid <- seq(0, 1, length.out = 300)
+
+fit_rigid <- smooth.spline(x_ej, y_ej, df = 2)
+fit_bueno <- smooth.spline(x_ej, y_ej, df = 5)
+fit_flexi <- smooth.spline(x_ej, y_ej, df = 25)
+
+df_fits <- data.frame(
+    x = rep(x_grid, 4),
+    y = c(
+        f2(x_grid),
+        predict(fit_rigid, x_grid)$y,
+        predict(fit_bueno, x_grid)$y,
+        predict(fit_flexi, x_grid)$y
+    ),
+    Modelo = factor(
+        rep(
+            c(
+                "f verdadera",
+                "Subajuste (df = 2)",
+                "Adecuado (df = 5)",
+                "Sobreajuste (df = 25)"
+            ),
+            each = 300
+        ),
+        levels = c(
+            "f verdadera",
+            "Subajuste (df = 2)",
+            "Adecuado (df = 5)",
+            "Sobreajuste (df = 25)"
+        )
+    )
+)
+
+ggplot() +
+    geom_point(
+        data = df_ej,
+        aes(x, y),
+        color = "#64748b",
+        size = 2,
+        alpha = 0.6
+    ) +
+    geom_line(
+        data = df_fits,
+        aes(x, y, color = Modelo, linetype = Modelo),
+        linewidth = 1.3
+    ) +
+    scale_color_manual(values = c(col_true, col_test, col_epe, col_var)) +
+    scale_linetype_manual(values = c("dashed", "solid", "solid", "solid")) +
+    labs(
+        x = "x",
+        y = "y",
+        title = "¿Qué modelo elegimos?",
+        subtitle = "Smoothing splines con distinta flexibilidad (grados de libertad)"
+    )
+```
+
+---
+
+## ¿Qué observamos?
+
+| Modelo | Flexibilidad | Error en entrenamiento | ¿Generaliza? |
+|:-------|:---:|:---:|:---:|
+| Subajuste (df = 2) | Baja | Alto | No — pierde la forma |
+| Adecuado (df = 5) | Media | Moderado | **Sí** — captura la señal |
+| Sobreajuste (df = 25) | Alta | Muy bajo | No — memoriza el ruido |
+
+. . .
+
+::: {.callout-tip}
+## Idea central
+Buscamos un equilibrio: un modelo suficientemente flexible para capturar la **señal**, pero no tanto como para aprender el **ruido**.
+:::
+
+---
+
+# Sobreajuste {background-color="#2c3e50"}
+
+---
+
+## ¿Qué es el sobreajuste?
+
+Asumimos un modelo generador:
+
+$$Y = f(X) + \varepsilon, \qquad \mathbb{E}[\varepsilon] = 0, \quad \text{Var}(\varepsilon) = \sigma^2$$
+
+. . .
+
+**Sobreajuste** ocurre cuando $\hat{f}$:
+
+- Tiene **error de entrenamiento bajo** (ajusta bien los datos observados)
+- Pero **error de predicción alto** (falla con datos nuevos)
+
+. . .
+
+El modelo **confunde señal con ruido**: aprende las particularidades aleatorias de la muestra en lugar de la relación verdadera $f$.
+
+---
+
+## Error de entrenamiento vs. error de test
+
+Dos cantidades fundamentales:
+
+$$\text{Error de entrenamiento:} \quad \overline{\text{err}} = \frac{1}{n}\sum_{i=1}^n (y_i - \hat{f}(x_i))^2$$
+
+$$\text{Error de test (EPE):} \quad \text{MSE}_{\text{test}} = \mathbb{E}\left[(Y_0 - \hat{f}(X_0))^2\right]$$
+
+donde $(X_0, Y_0)$ es una **nueva observación** independiente del entrenamiento.
+
+. . .
+
+::: {.callout-important}
+## Hecho fundamental
+El error de entrenamiento **subestima** el error de test. A mayor flexibilidad, mayor la brecha.
+:::
+
+---
+
+## Curvas de error: f casi lineal (ISLR, Fig. 2.9)
+
+```{r fig29, fig.height=5.5}
+# Replicar la estructura de ISLR Figures 2.9-2.11
+# Función para calcular train/test MSE vs flexibilidad (df de spline)
+calc_mse_vs_flex <- function(
+    f_true,
+    df_seq,
+    sigma = sigma_eps,
+    n_tr = n_train,
+    n_te = n_test,
+    seed = 42
+) {
+    set.seed(seed)
+    x_tr <- sort(runif(n_tr, 0, 1))
+    y_tr <- f_true(x_tr) + rnorm(n_tr, sd = sigma)
+    x_te <- sort(runif(n_te, 0, 1))
+    y_te <- f_true(x_te) + rnorm(n_te, sd = sigma)
+
+    res <- data.frame(df = df_seq, train = NA_real_, test = NA_real_)
+    for (i in seq_along(df_seq)) {
+        fit <- smooth.spline(x_tr, y_tr, df = df_seq[i])
+        pred_tr <- predict(fit, x_tr)$y
+        pred_te <- predict(fit, x_te)$y
+        res$train[i] <- mean((y_tr - pred_tr)^2)
+        res$test[i] <- mean((y_te - pred_te)^2)
+    }
+    res
+}
+
+df_seq <- seq(2, 25, by = 0.5)
+
+# Escenario 1: f casi lineal
+res1 <- calc_mse_vs_flex(f1, df_seq, seed = 101)
+
+pivot_longer(res1, c(train, test), names_to = "Tipo", values_to = "MSE") |>
+    mutate(Tipo = ifelse(Tipo == "train", "Entrenamiento", "Test")) |>
+    ggplot(aes(df, MSE, color = Tipo)) +
+    geom_line(linewidth = 1.5) +
+    geom_hline(
+        yintercept = sigma_eps^2,
+        linetype = "dashed",
+        color = col_irred,
+        linewidth = 1
+    ) +
+    annotate(
+        "text",
+        x = 23,
+        y = sigma_eps^2 + 0.005,
+        label = expression("Error irreducible " * sigma^2),
+        color = "#6c757d",
+        size = 5
+    ) +
+    scale_color_manual(values = c(col_train, col_test)) +
+    labs(
+        x = "Flexibilidad (grados de libertad del spline)",
+        y = "Error cuadrático medio",
+        title = "Escenario 1: f verdadera casi lineal",
+        subtitle = "Óptimo con baja flexibilidad — más complejidad solo agrega varianza"
+    ) +
+    coord_cartesian(ylim = c(0, max(res1$test) * 0.85))
+```
+
+---
+
+## Curvas de error: f no lineal moderada (ISLR, Fig. 2.10)
+
+```{r fig210, fig.height=5.5}
+res2 <- calc_mse_vs_flex(f2, df_seq, seed = 202)
+
+pivot_longer(res2, c(train, test), names_to = "Tipo", values_to = "MSE") |>
+    mutate(Tipo = ifelse(Tipo == "train", "Entrenamiento", "Test")) |>
+    ggplot(aes(df, MSE, color = Tipo)) +
+    geom_line(linewidth = 1.5) +
+    geom_hline(
+        yintercept = sigma_eps^2,
+        linetype = "dashed",
+        color = col_irred,
+        linewidth = 1
+    ) +
+    annotate(
+        "text",
+        x = 23,
+        y = sigma_eps^2 + 0.005,
+        label = expression(sigma^2),
+        color = "#6c757d",
+        size = 5
+    ) +
+    scale_color_manual(values = c(col_train, col_test)) +
+    labs(
+        x = "Flexibilidad (grados de libertad del spline)",
+        y = "Error cuadrático medio",
+        title = "Escenario 2: f verdadera moderadamente no lineal",
+        subtitle = "El mínimo del test MSE ocurre con flexibilidad intermedia"
+    ) +
+    coord_cartesian(ylim = c(0, max(res2$test) * 0.7))
+```
+
+---
+
+## Curvas de error: f altamente no lineal (ISLR, Fig. 2.11)
+
+```{r fig211, fig.height=5.5}
+res3 <- calc_mse_vs_flex(f3, df_seq, seed = 303)
+
+pivot_longer(res3, c(train, test), names_to = "Tipo", values_to = "MSE") |>
+    mutate(Tipo = ifelse(Tipo == "train", "Entrenamiento", "Test")) |>
+    ggplot(aes(df, MSE, color = Tipo)) +
+    geom_line(linewidth = 1.5) +
+    geom_hline(
+        yintercept = sigma_eps^2,
+        linetype = "dashed",
+        color = col_irred,
+        linewidth = 1
+    ) +
+    annotate(
+        "text",
+        x = 23,
+        y = sigma_eps^2 + 0.003,
+        label = expression(sigma^2),
+        color = "#6c757d",
+        size = 5
+    ) +
+    scale_color_manual(values = c(col_train, col_test)) +
+    labs(
+        x = "Flexibilidad (grados de libertad del spline)",
+        y = "Error cuadrático medio",
+        title = "Escenario 3: f verdadera altamente no lineal",
+        subtitle = "Necesita alta flexibilidad — el mínimo está más a la derecha"
+    ) +
+    coord_cartesian(ylim = c(0, max(res3$test) * 0.6))
+```
+
+---
+
+## Lecciones de los tres escenarios
+
+En **todos** los casos:
+
+1. El error de **entrenamiento** (azul) siempre **decrece** al aumentar la flexibilidad
+2. El error de **test** (rojo) tiene forma de **U**
+3. La línea punteada gris es $\sigma^2$ — el piso inalcanzable
+
+. . .
+
+Lo que cambia es **dónde está el mínimo**:
+
+| Escenario | f verdadera | Flexibilidad óptima |
+|:---|:---|:---:|
+| 1 | Casi lineal | Baja (~2-3 df) |
+| 2 | No lineal moderada | Media (~5-8 df) |
+| 3 | Altamente no lineal | Alta (~10-15 df) |
+
+. . .
+
+::: {.callout-important}
+## Consecuencia
+Usar el error de entrenamiento para elegir el modelo lleva **siempre** al sobreajuste.
+:::
+
+---
+
+# Descomposición Sesgo-Varianza {background-color="#2c3e50"}
+
+---
+
+## ¿Por qué la curva de test tiene forma de U?
+
+Para un punto $x_0$ fijo, el **error de predicción esperado** es:
+
+$$\text{EPE}(x_0) = \mathbb{E}_{Y_0, \mathcal{D}} \left[(Y_0 - \hat{f}(x_0))^2 \mid X = x_0\right]$$
+
+. . .
+
+La esperanza es sobre:
+
+- $Y_0 = f(x_0) + \varepsilon$: la nueva respuesta (con ruido)
+- $\mathcal{D}$: el conjunto de entrenamiento aleatorio
+
+. . .
+
+El EPE se puede **descomponer** en tres términos con interpretaciones distintas.
+
+---
+
+## Descomposición del EPE
+
+::: {.callout-important}
+## Teorema (Descomposición sesgo-varianza)
+Bajo el modelo $Y = f(x_0) + \varepsilon$ con $\mathbb{E}[\varepsilon] = 0$, $\text{Var}(\varepsilon) = \sigma^2$, $\varepsilon \perp\!\!\!\perp \mathcal{D}$:
+
+$$\boxed{\text{EPE}(x_0) = \underbrace{\text{Sesgo}^2(\hat{f}(x_0))}_{\left(\mathbb{E}_\mathcal{D}[\hat{f}(x_0)] - f(x_0)\right)^2} + \underbrace{\text{Var}_\mathcal{D}(\hat{f}(x_0))}_{\mathbb{E}_\mathcal{D}\left[(\hat{f}(x_0) - \mathbb{E}_\mathcal{D}[\hat{f}(x_0)])^2\right]} + \sigma^2}$$
+:::
+
+. . .
+
+- **Sesgo²**: error sistemático por simplificación — ¿cuánto se aleja $\hat{f}$ de $f$ **en promedio**?
+- **Varianza**: inestabilidad — ¿cuánto cambia $\hat{f}$ al cambiar la muestra?
+- **$\sigma^2$**: irreducible — ruido inherente, imposible de eliminar
+
+---
+
+## Demostración (1/2)
+
+Sea $\mu(x_0) = \mathbb{E}_\mathcal{D}[\hat{f}(x_0)]$. Partimos de:
+
+$$\text{EPE}(x_0) = \mathbb{E}_{Y_0,\mathcal{D}}\left[(Y_0 - \hat{f}(x_0))^2\right]$$
+
+Sumamos y restamos $f(x_0)$:
+
+$$= \mathbb{E}\left[\left(\underbrace{(Y_0 - f(x_0))}_{\varepsilon} + (f(x_0) - \hat{f}(x_0))\right)^2\right]$$
+
+Expandimos el cuadrado:
+
+$$= \underbrace{\mathbb{E}[\varepsilon^2]}_{\sigma^2} + \mathbb{E}_\mathcal{D}\left[(f(x_0) - \hat{f}(x_0))^2\right] + 2 \cdot \underbrace{\mathbb{E}[\varepsilon]}_{0} \cdot \mathbb{E}_\mathcal{D}[f(x_0) - \hat{f}(x_0)]$$
+
+El término cruzado es **cero** por: (i) $\varepsilon \perp\!\!\!\perp \mathcal{D}$, (ii) $\mathbb{E}[\varepsilon] = 0$.
+
+---
+
+## Demostración (2/2)
+
+Queda: $\text{EPE}(x_0) = \sigma^2 + \mathbb{E}_\mathcal{D}\left[(f(x_0) - \hat{f}(x_0))^2\right]$
+
+Ahora sumamos y restamos $\mu = \mathbb{E}_\mathcal{D}[\hat{f}(x_0)]$ en el segundo término:
+
+$$\mathbb{E}_\mathcal{D}\left[(f(x_0) - \hat{f}(x_0))^2\right] = \mathbb{E}_\mathcal{D}\left[\left((f(x_0) - \mu) + (\mu - \hat{f}(x_0))\right)^2\right]$$
+
+$$= \underbrace{(f(x_0) - \mu)^2}_{\text{Sesgo}^2} + \underbrace{\mathbb{E}_\mathcal{D}\left[(\hat{f}(x_0) - \mu)^2\right]}_{\text{Varianza}} + 2(f(x_0) - \mu)\underbrace{\mathbb{E}_\mathcal{D}[\mu - \hat{f}(x_0)]}_{= \, 0}$$
+
+. . .
+
+$$\boxed{\text{EPE}(x_0) = \text{Sesgo}^2(\hat{f}(x_0)) + \text{Var}(\hat{f}(x_0)) + \sigma^2} \qquad \blacksquare$$
+
+---
+
+## Descomposición numérica (ISLR, Fig. 2.12)
+
+```{r fig212, fig.height=6}
+# Simulación Monte Carlo de la descomposición sesgo-varianza
+# Usa smoothing splines como en ESL/ISLR
+n_sims <- 300
+df_flex <- seq(2, 22, by = 1)
+x_eval <- seq(0.05, 0.95, length.out = 80)
+f_true_eval <- f2(x_eval)
+
+# Matriz: [simulación, punto_evaluación, flexibilidad]
+preds <- array(NA, dim = c(n_sims, length(x_eval), length(df_flex)))
+
+for (s in 1:n_sims) {
+    x_s <- sort(runif(n_train, 0, 1))
+    y_s <- f2(x_s) + rnorm(n_train, sd = sigma_eps)
+    for (di in seq_along(df_flex)) {
+        fit <- smooth.spline(x_s, y_s, df = df_flex[di])
+        preds[s, , di] <- predict(fit, x_eval)$y
+    }
+}
+
+# Calcular sesgo², varianza, EPE promediados sobre x_eval
+decomp <- data.frame(flex = df_flex, sesgo2 = NA, varianza = NA, epe = NA)
+for (di in seq_along(df_flex)) {
+    mu_hat <- colMeans(preds[,, di]) # E[f_hat(x)]
+    decomp$sesgo2[di] <- mean((mu_hat - f_true_eval)^2)
+    decomp$varianza[di] <- mean(apply(preds[,, di], 2, var))
+    decomp$epe[di] <- decomp$sesgo2[di] + decomp$varianza[di] + sigma_eps^2
+}
+
+decomp_long <- decomp |>
+    pivot_longer(-flex, names_to = "Componente", values_to = "Valor") |>
+    mutate(
+        Componente = factor(
+            Componente,
+            levels = c("epe", "sesgo2", "varianza"),
+            labels = c("Test MSE (EPE)", "Sesgo²", "Varianza")
+        )
+    )
+
+ggplot(decomp_long, aes(flex, Valor, color = Componente)) +
+    geom_line(linewidth = 1.6) +
+    geom_point(size = 2) +
+    geom_hline(
+        yintercept = sigma_eps^2,
+        linetype = "dashed",
+        color = col_irred,
+        linewidth = 1.2
+    ) +
+    annotate(
+        "text",
+        x = 20.5,
+        y = sigma_eps^2 + 0.004,
+        label = expression("Irreducible " * sigma^2),
+        color = "#6c757d",
+        size = 5
+    ) +
+    scale_color_manual(values = c(col_epe, col_sesgo, col_var)) +
+    labs(
+        x = "Flexibilidad (grados de libertad)",
+        y = "Error",
+        title = "Descomposición sesgo-varianza del error de predicción",
+        subtitle = paste0(
+            "Simulación Monte Carlo: ",
+            n_sims,
+            " muestras de entrenamiento, f(x) = sin(2\u03c0x)"
+        )
+    ) +
+    geom_vline(
+        xintercept = decomp$flex[which.min(decomp$epe)],
+        linetype = "dotted",
+        color = col_epe,
+        linewidth = 0.8
+    )
+```
+
+---
+
+## Lectura del gráfico
+
+- **Sesgo²** (azul oscuro): **decrece** con la flexibilidad — modelos más flexibles pueden aproximar mejor $f$
+- **Varianza** (naranja): **crece** con la flexibilidad — modelos flexibles son inestables
+- **Test MSE** (verde): suma de ambas + $\sigma^2$ → forma de **U**
+- La línea vertical punteada marca el **óptimo**
+
+. . .
+
+::: {.callout-important}
+## El trade-off (ESL, Cap. 2.9)
+Al aumentar la flexibilidad, inicialmente el **sesgo baja más rápido** de lo que la varianza sube → el test MSE baja. Pasado el óptimo, la **varianza sube más rápido** → el test MSE sube.
+:::
+
+---
+
+## Visualización directa: sesgo vs. varianza
+
+```{r visual-sesgo-var, fig.height=6}
+# Mostrar las curvas ajustadas de muchas muestras para 3 niveles de flexibilidad
+n_show <- 40
+x_show <- seq(0.02, 0.98, length.out = 150)
+f_true_show <- f2(x_show)
+
+df_curvas_sims <- list()
+for (df_val in c(2, 6, 20)) {
+    for (s in 1:n_show) {
+        x_s <- sort(runif(n_train, 0, 1))
+        y_s <- f2(x_s) + rnorm(n_train, sd = sigma_eps)
+        fit <- smooth.spline(x_s, y_s, df = df_val)
+        df_curvas_sims[[length(df_curvas_sims) + 1]] <- data.frame(
+            x = x_show,
+            y = predict(fit, x_show)$y,
+            sim = s,
+            Flexibilidad = paste0("df = ", df_val)
+        )
+    }
+}
+df_curvas_sims <- bind_rows(df_curvas_sims)
+df_curvas_sims$Flexibilidad <- factor(
+    df_curvas_sims$Flexibilidad,
+    levels = c("df = 2", "df = 6", "df = 20")
+)
+df_ftrue <- data.frame(x = x_show, y = f_true_show)
+
+ggplot() +
+    geom_line(
+        data = df_curvas_sims,
+        aes(x, y, group = sim),
+        alpha = 0.2,
+        linewidth = 0.4,
+        color = col_train
+    ) +
+    geom_line(
+        data = df_ftrue,
+        aes(x, y),
+        color = col_test,
+        linewidth = 1.5,
+        linetype = "dashed"
+    ) +
+    facet_wrap(~Flexibilidad) +
+    labs(
+        x = "x",
+        y = expression(hat(f)(x)),
+        title = "40 ajustes sobre distintas muestras de entrenamiento",
+        subtitle = "Línea roja punteada = f verdadera. Azul = ajustes individuales"
+    ) +
+    coord_cartesian(ylim = c(-1.8, 1.8))
+```
+
+---
+
+## Interpretación de los tres paneles
+
+:::: {.columns}
+::: {.column width="33%"}
+**df = 2 (rígido)**
+
+- Curvas muy similares entre sí
+- → **baja varianza**
+- Pero lejos de $f$
+- → **alto sesgo**
+:::
+::: {.column width="34%"}
+**df = 6 (óptimo)**
+
+- Curvas moderadamente variables
+- → **varianza moderada**
+- Cercanas a $f$ en promedio
+- → **bajo sesgo**
+:::
+::: {.column width="33%"}
+**df = 20 (flexible)**
+
+- Curvas muy distintas entre sí
+- → **alta varianza**
+- Oscilan alrededor de $f$
+- → **sesgo ≈ 0**
+:::
+::::
+
+. . .
+
+::: {.callout-note}
+## Resumen visual
+El sobreajuste se **ve** como alta dispersión de las curvas azules. El subajuste se **ve** como un desvío sistemático respecto a la roja.
+:::
+
+---
+
+# Validación: Train/Test {background-color="#2c3e50"}
+
+---
+
+## ¿Cómo estimamos el error de test en la práctica?
+
+No conocemos $f$ → no podemos calcular sesgo² ni varianza directamente.
+
+. . .
+
+**Idea fundamental**: reservar datos que el modelo **nunca ve** durante el ajuste.
+
+$$\text{Datos} = \underbrace{\text{Entrenamiento (Train)}}_{\text{para ajustar } \hat{f}} \;\cup\; \underbrace{\text{Prueba (Test)}}_{\text{para estimar el error}}$$
+
+. . .
+
+**Procedimiento**:
+
+1. Dividir aleatoriamente: entrenamiento (e.g., 70%) y test (30%)
+2. Ajustar $\hat{f}$ **solo con entrenamiento**
+3. Evaluar: $\widehat{\text{MSE}}_{\text{test}} = \frac{1}{n_{\text{test}}} \sum_{i \in \text{test}} (y_i - \hat{f}(x_i))^2$
+
+---
+
+## Regla de oro
+
+::: {.callout-important}
+## Los datos de test NUNCA se usan para:
+- Entrenar el modelo
+- Seleccionar variables
+- Elegir hiperparámetros
+- Ninguna decisión sobre el modelo
+
+Solo se miran **una vez**, al final, como evaluación definitiva.
+:::
+
+. . .
+
+Si usás los datos de test para tomar decisiones, **dejan de ser datos de test** y la estimación del error se vuelve optimista.
+
+---
+
+## Ejemplo en R
+
+```{r train-test-code}
+# Generar datos
+set.seed(123)
+n <- 80
+x <- sort(runif(n, 0, 1))
+y <- f2(x) + rnorm(n, sd = 0.25)
+
+# Partición 70/30
+idx_train <- sample(n, size = 0.7 * n)
+train <- data.frame(x = x[idx_train], y = y[idx_train])
+test <- data.frame(x = x[-idx_train], y = y[-idx_train])
+
+# Evaluar smoothing splines con distinta flexibilidad
+df_grid <- seq(2, 20, by = 1)
+mse <- sapply(df_grid, function(d) {
+    fit <- smooth.spline(train$x, train$y, df = d)
+    c(
+        train = mean((train$y - predict(fit, train$x)$y)^2),
+        test = mean((test$y - predict(fit, test$x)$y)^2)
+    )
+})
+```
+
+```{r train-test-plot, fig.height=4.2}
+data.frame(
+    df = rep(df_grid, 2),
+    MSE = c(mse["train", ], mse["test", ]),
+    Conjunto = rep(c("Entrenamiento", "Test"), each = length(df_grid))
+) |>
+    ggplot(aes(df, MSE, color = Conjunto)) +
+    geom_line(linewidth = 1.4) +
+    geom_point(size = 2.5) +
+    scale_color_manual(values = c(col_train, col_test)) +
+    labs(
+        x = "Flexibilidad (df)",
+        y = "ECM",
+        title = "Selección de modelo con partición train/test"
+    )
+```
+
+---
+
+## Problema: alta variabilidad (ISLR, Fig. 5.2)
+
+```{r variabilidad-tt, fig.height=5.5}
+# Replicar ISLR Figure 5.2: muchas particiones train/test distintas
+n_reps <- 15
+x_full <- sort(runif(100, 0, 1))
+y_full <- f2(x_full) + rnorm(100, sd = sigma_eps)
+
+df_reps <- list()
+for (r in 1:n_reps) {
+    idx <- sample(100, 70)
+    x_tr <- x_full[idx]
+    y_tr <- y_full[idx]
+    x_te <- x_full[-idx]
+    y_te <- y_full[-idx]
+    mse_te <- sapply(df_grid, function(d) {
+        fit <- smooth.spline(x_tr, y_tr, df = d)
+        mean((y_te - predict(fit, x_te)$y)^2)
+    })
+    df_reps[[r]] <- data.frame(df = df_grid, test_mse = mse_te, rep = r)
+}
+df_reps <- bind_rows(df_reps)
+
+ggplot(df_reps, aes(df, test_mse, group = rep, color = factor(rep))) +
+    geom_line(linewidth = 0.9, show.legend = FALSE) +
+    scale_color_manual(
+        values = rep(
+            c(col_test, col_sesgo, col_var, col_epe, col_train),
+            each = 3
+        )
+    ) +
+    labs(
+        x = "Flexibilidad (df)",
+        y = "ECM en test",
+        title = "15 particiones train/test distintas",
+        subtitle = "Cada línea es una partición aleatoria diferente — resultados muy variables"
+    ) +
+    coord_cartesian(ylim = c(0, 0.35))
+```
+
+---
+
+## Limitaciones de train/test
+
+::: {.incremental}
+1. **Alta variabilidad**: el modelo "óptimo" cambia según la partición aleatoria
+2. **Desperdicio de datos**: solo entrenamos con una fracción → peor $\hat{f}$
+3. **Sin medida de incertidumbre**: un solo número, sin error estándar
+:::
+
+. . .
+
+::: {.callout-note}
+## Solución
+¿Y si en lugar de hacer UNA partición, hacemos **varias** y promediamos?
+
+→ **Validación cruzada**
+:::
+
+---
+
+# Validación Cruzada K-fold {background-color="#2c3e50"}
+
+---
+
+## Procedimiento K-fold CV
+
+1. Dividir los $n$ datos aleatoriamente en $K$ grupos (**folds**) de tamaño $\approx n/K$
+2. Para $k = 1, \ldots, K$:
+   - Entrenar $\hat{f}^{(-k)}$ con **todos los datos excepto** el fold $k$
+   - Evaluar en el fold $k$: $\text{MSE}_k = \frac{1}{|F_k|}\sum_{i \in F_k} (y_i - \hat{f}^{(-k)}(x_i))^2$
+3. Promediar:
+
+$$\text{CV}_{(K)} = \frac{1}{K}\sum_{k=1}^K \text{MSE}_k$$
+
+---
+
+## Esquema visual de 5-fold CV
+
+```{r cv-schema, fig.height=4, fig.width=10}
+K <- 5
+cv_schema <- expand.grid(Fold = 1:K, Iteración = 1:K) |>
+    mutate(
+        Rol = ifelse(Fold == Iteración, "Test", "Entrenamiento"),
+        label = ifelse(Fold == Iteración, "Test", "Train")
+    )
+
+ggplot(cv_schema, aes(x = Fold, y = factor(Iteración, levels = K:1))) +
+    geom_tile(aes(fill = Rol), color = "white", linewidth = 1.5) +
+    geom_text(
+        aes(label = label),
+        size = 5,
+        fontface = "bold",
+        color = "white"
+    ) +
+    scale_fill_manual(
+        values = c("Entrenamiento" = "#56B4E9", "Test" = "#D55E00")
+    ) +
+    scale_x_continuous(
+        breaks = 1:K,
+        labels = paste("Fold", 1:K),
+        position = "top",
+        expand = c(0, 0)
+    ) +
+    scale_y_discrete(labels = paste("Iteración", K:1)) +
+    labs(x = NULL, y = NULL, fill = NULL) +
+    annotate(
+        "text",
+        x = K + 0.7,
+        y = factor(K:1, levels = K:1),
+        label = paste0("→ MSE", 1:K),
+        hjust = 0,
+        size = 4.5,
+        color = "#64748b",
+        fontface = "italic"
+    ) +
+    coord_cartesian(xlim = c(0.5, K + 1.5), clip = "off") +
+    theme_minimal(base_size = 16) +
+    theme(
+        legend.position = "none",
+        panel.grid = element_blank(),
+        axis.text.y = element_text(face = "bold", size = 13),
+        axis.text.x = element_text(face = "bold", size = 13),
+        plot.background = element_rect(fill = "white", color = NA)
+    )
+```
+
+. . .
+
+**Ventajas**:
+
+- **Todas** las observaciones se usan para entrenar y para evaluar
+- Estimación **más estable** del error de test
+- Se puede calcular un **error estándar**: $\text{SE} = s / \sqrt{K}$
+
+---
+
+## Ejemplo: 10-fold CV
+
+```{r cv-code}
+# 10-fold Cross-Validation
+K <- 10
+folds <- sample(rep(1:K, length.out = 100))
+
+cv_error <- function(df_val, x, y, folds, K) {
+    mse_k <- sapply(1:K, function(k) {
+        fit <- smooth.spline(x[folds != k], y[folds != k], df = df_val)
+        mean((y[folds == k] - predict(fit, x[folds == k])$y)^2)
+    })
+    c(mean = mean(mse_k), se = sd(mse_k) / sqrt(K))
+}
+
+cv_res <- t(sapply(df_grid, cv_error, x_full, y_full, folds, K))
+cv_df <- data.frame(df = df_grid, cv = cv_res[, 1], se = cv_res[, 2])
+```
+
+```{r cv-plot, fig.height=4.5}
+mejor <- cv_df$df[which.min(cv_df$cv)]
+
+ggplot(cv_df, aes(df, cv)) +
+    geom_ribbon(
+        aes(ymin = cv - se, ymax = cv + se),
+        alpha = 0.15,
+        fill = col_sesgo
+    ) +
+    geom_line(linewidth = 1.4, color = col_sesgo) +
+    geom_point(size = 3, color = col_sesgo) +
+    geom_point(
+        data = cv_df[cv_df$df == mejor, ],
+        size = 6,
+        color = col_test,
+        shape = 18
+    ) +
+    labs(
+        x = "Flexibilidad (df)",
+        y = "CV-MSE ± 1 SE",
+        title = "10-fold Cross-Validation",
+        subtitle = paste("Mínimo en df =", mejor)
+    ) +
+    annotate(
+        "text",
+        x = mejor + 1.5,
+        y = min(cv_df$cv) - 0.003,
+        label = paste("Mínimo"),
+        color = col_test,
+        size = 5,
+        fontface = "bold"
+    )
+```
+
+---
+
+## Regla del 1-SE (one-standard-error rule)
+
+::: {.callout-tip}
+## Regla práctica (Hastie, Tibshirani & Friedman, 2009)
+Elegir el modelo **más simple** (menos flexible) cuyo CV-MSE esté dentro de 1 error estándar del mínimo:
+
+$$\hat{d}_{1\text{SE}} = \min\left\{d : \text{CV}(d) \leq \text{CV}(\hat{d}) + \text{SE}(\hat{d})\right\}$$
+:::
+
+. . .
+
+**Justificación**: la estimación CV tiene incertidumbre. Si dos modelos son estadísticamente indistinguibles, preferimos el más **parsimonioso** (navaja de Occam).
+
+```{r regla-1se, fig.height=3.8}
+umbral <- min(cv_df$cv) + cv_df$se[which.min(cv_df$cv)]
+modelo_1se <- min(cv_df$df[cv_df$cv <= umbral])
+
+ggplot(cv_df, aes(df, cv)) +
+    geom_ribbon(
+        aes(ymin = cv - se, ymax = cv + se),
+        alpha = 0.12,
+        fill = col_sesgo
+    ) +
+    geom_line(linewidth = 1.2, color = col_sesgo) +
+    geom_point(size = 2.5, color = col_sesgo) +
+    geom_hline(
+        yintercept = umbral,
+        linetype = "dashed",
+        color = col_var,
+        linewidth = 1
+    ) +
+    geom_point(
+        data = cv_df[cv_df$df == mejor, ],
+        size = 5,
+        color = col_test,
+        shape = 18
+    ) +
+    geom_point(
+        data = cv_df[cv_df$df == modelo_1se, ],
+        size = 5,
+        color = col_epe,
+        shape = 18
+    ) +
+    annotate(
+        "text",
+        x = 17,
+        y = umbral + 0.004,
+        label = "Umbral 1-SE",
+        color = col_var,
+        size = 5,
+        fontface = "bold"
+    ) +
+    annotate(
+        "text",
+        x = mejor + 1.5,
+        y = min(cv_df$cv) - 0.005,
+        label = paste("CV mín (df =", mejor, ")"),
+        color = col_test,
+        size = 4.5
+    ) +
+    annotate(
+        "text",
+        x = modelo_1se + 2.5,
+        y = cv_df$cv[cv_df$df == modelo_1se] + 0.006,
+        label = paste("1-SE (df =", modelo_1se, ")"),
+        color = col_epe,
+        size = 4.5
+    ) +
+    labs(
+        x = "Flexibilidad (df)",
+        y = "CV-MSE",
+        title = "Regla del 1-SE: preferir simplicidad ante incertidumbre"
+    )
+```
+
+---
+
+## Leave-One-Out CV (LOO-CV)
+
+Caso especial $K = n$: cada observación es su propio fold.
+
+$$\text{CV}_{(n)} = \frac{1}{n}\sum_{i=1}^n \left(y_i - \hat{f}^{(-i)}(x_i)\right)^2$$
+
+. . .
+
+::: {.callout-important}
+## Fórmula mágica para modelos lineales (ISLR, Eq. 5.2)
+Para cualquier modelo lineal (regresión, polinomios, splines de regresión):
+
+$$\text{CV}_{(n)} = \frac{1}{n}\sum_{i=1}^n \left(\frac{y_i - \hat{y}_i}{1 - h_{ii}}\right)^2$$
+
+donde $h_{ii}$ es el **leverage** de la observación $i$ (diagonal de $H = X(X^TX)^{-1}X^T$).
+
+No requiere reajustar el modelo $n$ veces — se calcula con un solo ajuste.
+:::
+
+---
+
+## ¿Cómo elegir K? Trade-off sesgo-varianza en CV
+
+| $K$ | Sesgo de CV | Varianza de CV | Costo |
+|:---|:---:|:---:|:---:|
+| $K = 5$ | Moderado (80% para entrenar) | **Baja** | Bajo |
+| $K = 10$ | Bajo (90% para entrenar) | Moderada | Moderado |
+| $K = n$ (LOO) | Mínimo (99% para entrenar) | **Alta** | Alto |
+
+. . .
+
+::: {.callout-note}
+## ¿Por qué LOO tiene alta varianza? (ISLR, Sec. 5.1.4)
+Los $n$ conjuntos de entrenamiento se solapan en $n-2$ observaciones → los $n$ estimados $\text{MSE}_k$ están **altamente correlacionados** → su promedio tiene alta varianza.
+
+Con $K = 10$, los conjuntos comparten ~80% → menor correlación → **promedio más estable**.
+:::
+
+---
+
+## ¿Y con muchos datos?
+
+Cuando $n$ es grande (miles o millones), el panorama cambia:
+
+. . .
+
+- **Train/test simple es suficiente**: con $n = 100\,000$, un 20% de test son 20.000 observaciones → estimación muy estable, CV aporta poco
+- **CV es costoso**: $K$ ajustes sobre datasets grandes puede ser prohibitivo en tiempo
+- **Se usa train / validation / test** (tres conjuntos): uno para entrenar, otro para elegir hiperparámetros, otro para reportar el error final
+
+. . .
+
+::: {.callout-note}
+## Referencia (Hastie et al., ESL, Sec. 7.2)
+> *"If we are in a data-rich situation, the best approach [...] is to randomly divide the dataset into three parts: a training set, a validation set, and a test set."*
+:::
+
+- **$n$ chico** (decenas a cientos): CV es esencial, cada dato cuenta
+- **$n$ moderado** (miles): CV sigue siendo útil, especialmente $K = 5$ o $10$
+- **$n$ grande** (decenas de miles o más): un único split train/validation/test es suficiente y mucho más eficiente
+
+---
+
+## ¿Qué datos se usan para el modelo final?
+
+Una vez **seleccionada la complejidad** (grado, $\lambda$, df, ...) mediante CV o validación:
+
+. . .
+
+> El modelo final se reajusta con **todos los datos disponibles**.
+
+. . .
+
+- CV sirve para **elegir** el modelo, no para ajustarlo
+- Una vez elegido, usar más datos → menor varianza → mejor $\hat{f}$
+- El error reportado sigue siendo el estimado por CV (o por el test set reservado)
+
+::: {.callout-note}
+## Referencia (Hastie et al., ESL, Sec. 7.10.1)
+> *"Our final chosen model is $f(x, \hat{\alpha})$, which we then fit to all the data."*
+
+La complejidad ya fue elegida → usar todos los datos reduce la varianza de $\hat{f}$ sin cambiar el sesgo.
+:::
+
+---
+
+# Resumen y cierre {background-color="#2c3e50"}
+
+---
+
+## Ideas clave
+
+::: {.incremental}
+1. **Sobreajuste**: un modelo flexible memoriza el ruido → error de entrenamiento bajo pero test MSE alto
+
+2. **Descomposición**: $\text{EPE} = \text{Sesgo}^2 + \text{Varianza} + \sigma^2$. La complejidad óptima equilibra sesgo y varianza
+
+3. **Train/test split**: reservar datos para evaluar. Simple pero variable y desperdicia datos
+
+4. **K-fold CV**: cada dato se usa para entrenar y evaluar. Más estable y eficiente
+
+5. **Regla 1-SE**: ante la incertidumbre, preferir el modelo más simple que sea competitivo
+:::
+
+---
+
+## Conexión con el resto del aprendizaje estadístico
+
+Estas ideas son **transversales**:
+
+| Método | Manejo del trade-off |
+|:---|:---|
+| Regularización (Ridge, Lasso) | Introduce sesgo controlado para reducir varianza |
+| Bagging / Random Forest | Reduce varianza promediando modelos decorrelacionados |
+| Boosting | Reduce sesgo secuencialmente |
+| Selección de hiperparámetros | **Siempre** por CV — nunca por error de entrenamiento |
+
+. . .
+
+::: {.callout-important}
+## Para recordar
+El trade-off sesgo-varianza y la validación cruzada son los **fundamentos** del aprendizaje supervisado moderno.
+:::
+
+---
+
+# Laboratorio {background-color="#2c3e50"}
+
+---
+
+## Actividad práctica: datos Auto (ISLR)
+
+Vamos a replicar los gráficos de la clase usando datos **reales**: el dataset `Auto` del paquete `ISLR` (392 vehículos, relación `mpg ~ horsepower`).
+
+```{r lab-setup}
+library(ISLR)
+data(Auto)
+head(Auto[, c("mpg", "horsepower")], 5)
+```
+
+. . .
+
+**Ejercicios propuestos** (ver documento completo del laboratorio):
+
+1. Ajustar polinomios de distinto grado y observar el sobreajuste
+2. Implementar partición train/test y observar variabilidad
+3. Implementar 10-fold CV manualmente
+4. Aplicar la regla del 1-SE
+
+---
+
+## Ejercicio para entregar
+
+Replicar con los datos `Auto`:
+
+1. El gráfico de **error train vs test** para polinomios grado 1-15
+2. La curva de **10-fold CV con banda ± 1 SE**
+3. Aplicar la **regla 1-SE** e indicar qué modelo selecciona
+4. Comparar el resultado con LOO-CV
+
+---
+
+## Próxima clase
+
+**Regularización: Ridge, Lasso y Elastic Net**
+
+- ¿Cómo controlar la complejidad sin elegir variables manualmente?
+- Penalización $L_2$ (Ridge) y $L_1$ (Lasso): formulación, geometría y soluciones
+- Selección de $\lambda$ por validación cruzada
+- El compromiso sesgo-varianza desde la óptica de la regularización
+
+---
+
+## Referencias
+
+- James, G., Witten, D., Hastie, T. & Tibshirani, R. (2021). *An Introduction to Statistical Learning* (2nd ed.). Cap. 2.2 y 5.1.
+- Hastie, T., Tibshirani, R. & Friedman, J. (2009). *The Elements of Statistical Learning* (2nd ed.). Cap. 2.9, 7.1–7.4, 7.10.
+

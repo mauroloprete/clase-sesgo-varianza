@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sobreajuste y sesgo-varianza — IESTA, FCEA</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: #fafafa;
+            color: #1e293b;
+            line-height: 1.6;
+            padding: 2rem;
+        }
+        .container {
+            max-width: 750px;
+            margin: 0 auto;
+            padding: 3rem 2rem;
+        }
+        h1 {
+            color: #c0392b;
+            font-size: 1.8rem;
+            margin-bottom: 0.3rem;
+        }
+        h2 {
+            color: #1e293b;
+            font-size: 1.2rem;
+            font-weight: 500;
+            margin-bottom: 1.5rem;
+        }
+        .meta {
+            color: #64748b;
+            font-size: 0.95rem;
+            margin-bottom: 2rem;
+            border-left: 3px solid #ea504c;
+            padding-left: 1rem;
+        }
+        .meta strong { color: #1e293b; }
+        .resumen {
+            margin-bottom: 2rem;
+            font-size: 1rem;
+        }
+        .resumen p { margin-bottom: 0.8rem; }
+        .resumen ul {
+            margin-left: 1.5rem;
+            margin-bottom: 0.8rem;
+        }
+        .resumen li { margin-bottom: 0.3rem; }
+        .cards {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            margin-top: 2rem;
+        }
+        a.card {
+            display: block;
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-left: 4px solid #ea504c;
+            border-radius: 8px;
+            padding: 1.2rem 1.5rem;
+            text-decoration: none;
+            color: inherit;
+            transition: box-shadow 0.2s, transform 0.2s;
+        }
+        a.card:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            transform: translateY(-2px);
+        }
+        .card-title {
+            font-weight: 600;
+            font-size: 1.05rem;
+            color: #c0392b;
+            margin-bottom: 0.2rem;
+        }
+        .card-desc {
+            color: #64748b;
+            font-size: 0.9rem;
+        }
+        .footer {
+            margin-top: 3rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid #e2e8f0;
+            color: #94a3b8;
+            font-size: 0.85rem;
+            text-align: center;
+        }
+        .footer a { color: #c0392b; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Sobreajuste y la disyuntiva sesgo-varianza</h1>
+        <h2>Validaci&oacute;n mediante partici&oacute;n en conjuntos de entrenamiento y prueba</h2>
+
+        <div class="meta">
+            Concurso Docente Grado 2 &mdash; Llamado 042-25<br>
+            Instituto de Estad&iacute;stica (IESTA), FCEA, UDELAR<br>
+            <strong>Docente:</strong> Mauro Loprete
+        </div>
+
+        <div class="resumen">
+            <p><strong>&iquest;De qu&eacute; trata esta clase?</strong></p>
+            <p>El error de entrenamiento siempre disminuye al aumentar la complejidad del modelo, pero esto no garantiza buena capacidad predictiva sobre datos nuevos. En esta clase se desarrollan los fundamentos te&oacute;ricos y pr&aacute;cticos para abordar este problema:</p>
+            <ul>
+                <li>El fen&oacute;meno de <strong>sobreajuste</strong> y por qu&eacute; el error de entrenamiento subestima el error de predicci&oacute;n.</li>
+                <li>La <strong>descomposici&oacute;n sesgo-varianza</strong> del error esperado de predicci&oacute;n (EPE = Sesgo&sup2; + Varianza + &sigma;&sup2;) y sus implicancias para la selecci&oacute;n de modelos.</li>
+                <li>M&eacute;todos de estimaci&oacute;n del error de predicci&oacute;n: <strong>partici&oacute;n train/test</strong> y <strong>validaci&oacute;n cruzada K-fold</strong>.</li>
+                <li>La <strong>regla del 1-SE</strong> como criterio de parsimonia en la selecci&oacute;n de complejidad.</li>
+                <li><strong>Caso big data</strong>: cu&aacute;ndo CV es necesario y cu&aacute;ndo basta un &uacute;nico split train/validation/test.</li>
+                <li><strong>Modelo final</strong>: por qu&eacute; se reajusta con todos los datos una vez elegida la complejidad.</li>
+            </ul>
+            <p><strong>Bibliograf&iacute;a:</strong> James et al. (ISLR, Cap. 5) y Hastie et al. (ESL, Cap. 7).</p>
+        </div>
+
+        <div class="cards">
+            <a class="card" href="clase_sesgo_varianza.html">
+                <div class="card-title">Diapositivas de la clase</div>
+                <div class="card-desc">Presentaci&oacute;n te&oacute;rica con demostraciones, simulaciones Monte Carlo y ejemplos aplicados.</div>
+            </a>
+            <a class="card" href="lab_sesgo_varianza_student.html">
+                <div class="card-title">Laboratorio</div>
+                <div class="card-desc">Ejercicios pr&aacute;cticos con el dataset <code>Auto</code> (ISLR). Disponible para descargar en formato QMD.</div>
+            </a>
+            <a class="card" href="lab_sesgo_varianza.html">
+                <div class="card-title">Laboratorio con soluciones</div>
+                <div class="card-desc">Versi&oacute;n resuelta del laboratorio con c&oacute;digo completo y explicaciones detalladas.</div>
+            </a>
+            <a class="card" href="https://github.com/mauroloprete/clase-sesgo-varianza">
+                <div class="card-title">Repositorio GitHub</div>
+                <div class="card-desc">C&oacute;digo fuente de todos los materiales (.qmd).</div>
+            </a>
+        </div>
+
+        <div class="footer">
+            IESTA &mdash; <a href="https://www.fcea.udelar.edu.uy">Facultad de Ciencias Econ&oacute;micas y de Administraci&oacute;n</a> &mdash; Universidad de la Rep&uacute;blica
+        </div>
+    </div>
+</body>
+</html>

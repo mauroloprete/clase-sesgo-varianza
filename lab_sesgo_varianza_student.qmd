@@ -1,0 +1,194 @@
+---
+title: "Laboratorio: Sobreajuste, Sesgo-Varianza y Validación Cruzada"
+subtitle: "Clase de Grado — IESTA, FCEA, UDELAR"
+author: "Tu nombre"
+date: '2026-06-17'
+quarto-required: ">=1.3.0"
+lang: es
+format:
+    html:
+        code-fold: false
+        code-summary: "Ver el código"
+        toc: true
+        page-layout: full
+        embed-resources: true
+        self-contained-math: true
+        html-math-method: katex
+        fig-height: 6
+        fig-width: 9
+execute:
+  warning: false
+  message: false
+---
+
+<a href="lab_sesgo_varianza_student.qmd" download class="btn-download" style="display:inline-block; background-color:#c0392b; color:white; padding:10px 20px; border-radius:6px; text-decoration:none; font-weight:600; font-size:0.95rem; margin-bottom:1.5rem;">⬇ Bajar QMD</a>
+
+```{r setup}
+#| include: false
+library(ggplot2)
+library(dplyr)
+library(ISLR)
+library(boot)
+
+theme_set(theme_minimal(base_size = 14))
+```
+
+## Objetivos
+
+En este laboratorio vamos a:
+
+1. **Visualizar** el sobreajuste ajustando modelos polinomiales de distinto grado
+2. **Implementar** la partición train/test y observar su variabilidad
+3. **Aplicar** validación cruzada K-fold para seleccionar la complejidad del modelo
+4. **Verificar** empíricamente la descomposición sesgo-varianza mediante simulación Monte Carlo
+
+Trabajaremos con el dataset `Auto` del paquete `ISLR`, que contiene información sobre 392 vehículos.
+
+## Repaso de conceptos clave
+
+::: {.callout-note}
+## Ideas centrales de la clase
+
+**Sobreajuste**: Un modelo demasiado complejo memoriza el ruido de los datos de entrenamiento. El error de entrenamiento (MSE$_{\text{train}}$) siempre decrece con la complejidad, pero el error de predicción sobre datos nuevos (MSE$_{\text{test}}$) tiene forma de U.
+
+**Descomposición sesgo-varianza**: Para un punto $x_0$, el error esperado de predicción se descompone como:
+$$\text{EPE}(x_0) = \text{Sesgo}^2[\hat{f}(x_0)] + \text{Var}[\hat{f}(x_0)] + \sigma^2$$
+
+- *Sesgo*: error sistemático por usar un modelo demasiado simple (no captura la señal).
+- *Varianza*: inestabilidad del modelo ante distintas muestras de entrenamiento (sensibilidad al ruido).
+- *σ²*: ruido irreducible inherente a los datos.
+
+**Validación train/test**: Dividir los datos en entrenamiento y prueba permite estimar el error de predicción, pero la estimación tiene alta variabilidad según la partición elegida.
+
+**Validación cruzada K-fold**: Divide los datos en K grupos, entrena K veces dejando un grupo afuera cada vez, y promedia los errores. Reduce la variabilidad respecto a un único split train/test.
+
+**Regla del 1-SE**: Elegir el modelo más simple cuyo CV-error esté dentro de 1 error estándar del mínimo. Favorece la parsimonia.
+
+**LOO-CV para modelos lineales**: Se calcula con una sola pasada usando los leverages $h_{ii}$:
+$$\text{CV}_{(n)} = \frac{1}{n}\sum_{i=1}^n \left(\frac{y_i - \hat{y}_i}{1 - h_{ii}}\right)^2$$
+:::
+
+## Datos: Auto (ISLR)
+
+```{r}
+data(Auto)
+Auto <- Auto |> select(mpg, horsepower, weight, year, name)
+head(Auto, 8)
+```
+
+La variable respuesta es **`mpg`** (millas por galón — eficiencia de combustible) y la principal variable explicativa es **`horsepower`** (potencia del motor).
+
+```{r}
+ggplot(Auto, aes(x = horsepower, y = mpg)) +
+  geom_point(alpha = 0.5, color = "#64748b") +
+  labs(x = "Potencia (HP)", y = "Consumo (MPG)",
+       title = "Relación entre potencia y consumo") +
+  geom_smooth(method = "loess", se = FALSE, color = "#D55E00",
+              linetype = "dashed", linewidth = 1)
+```
+
+La relación es claramente **no lineal**: a medida que la potencia crece, el consumo baja, pero con rendimientos decrecientes.
+
+---
+
+## Ejercicio 1: Visualizando el sobreajuste
+
+### 1.1 Ajuste polinomios de grado 1, 2, 4, 10 y 20 a la relación `mpg ~ horsepower`. Grafique los ajustes superpuestos a los datos.
+
+::: {.callout-tip collapse="true"}
+## Pista
+Use `lm(mpg ~ poly(horsepower, degree), data = Auto)` para ajustar polinomios ortogonales. Para graficar, genere predicciones sobre una grilla fina de valores de `horsepower`.
+:::
+
+
+### 1.2 Calcule el error de entrenamiento (MSE) para cada grado. ¿Qué observa al aumentar el grado?
+
+
+**Observación**: El MSE de entrenamiento decrece monótonamente. Si usáramos solo este criterio, siempre elegiríamos el modelo más complejo — lo cual lleva al sobreajuste.
+
+---
+
+## Ejercicio 2: Partición Train/Test
+
+### 2.1 Divida los datos aleatoriamente en 70% entrenamiento y 30% test. Ajuste polinomios de grado 1 a 15 y calcule el MSE de entrenamiento y de test para cada grado.
+
+
+### 2.2 Repita la partición train/test 20 veces con distintas semillas. Grafique las 20 curvas de test MSE superpuestas. ¿Qué observa?
+
+
+**Conclusión**: La estimación del error de test depende mucho de **qué observaciones** caen en cada conjunto. Esto motiva el uso de validación cruzada.
+
+---
+
+## Ejercicio 3: Validación Cruzada K-fold
+
+### 3.1 Implemente manualmente 10-fold CV para seleccionar el grado del polinomio.
+
+::: {.callout-tip collapse="true"}
+## Pista
+Cree los folds con `folds <- sample(rep(1:K, length.out = n))`. Luego itere sobre cada fold, ajuste con los datos fuera del fold, y evalúe en el fold.
+:::
+
+
+### 3.2 Verifique su resultado usando la función `cv.glm()` del paquete `boot`.
+
+
+### 3.3 Aplique la regla del 1-SE. ¿Qué modelo selecciona?
+
+
+---
+
+## Ejercicio 4: LOO-CV y la fórmula del leverage
+
+### 4.1 Calcule el LOO-CV para el modelo cuadrático usando la fórmula:
+
+$$\text{CV}_{(n)} = \frac{1}{n}\sum_{i=1}^n \left(\frac{y_i - \hat{y}_i}{1 - h_{ii}}\right)^2$$
+
+donde $h_{ii}$ es el leverage de la observación $i$.
+
+
+**Observación**: La fórmula del leverage da **exactamente** el mismo resultado que reajustar el modelo $n$ veces, pero en una sola operación.
+
+### 4.2 Grafique los leverage $h_{ii}$ vs. `horsepower`. ¿Qué observaciones tienen más influencia?
+
+
+---
+
+## Ejercicio 5: Simulación Monte Carlo del trade-off sesgo-varianza
+
+### 5.1 Genere datos con una función verdadera conocida y verifique empíricamente la descomposición $\text{EPE} = \text{Sesgo}^2 + \text{Varianza} + \sigma^2$.
+
+Usaremos $f(x) = \sin(2\pi x)$ con $\sigma = 0.3$ y $n = 50$.
+
+
+### 5.2 Verifique que EPE ≈ Sesgo² + Varianza + σ² numéricamente.
+
+
+**Verificación**: La columna EPE coincide exactamente con Sesgo² + Varianza + σ², confirmando empíricamente el teorema de descomposición.
+
+---
+
+## Ejercicio 6 (Bonus): Comparación K=5 vs K=10 vs LOO
+
+### 6.1 Para el dataset Auto, compare la estimación del error de predicción usando K=5, K=10 y LOO para polinomios de grado 1 a 10. Repita cada CV 30 veces y compare la variabilidad.
+
+
+**Observaciones**:
+
+- K=5 tiene **más variabilidad** entre repeticiones (folds más pequeños, más aleatorios)
+- K=10 es más **estable**
+- LOO es determinístico (siempre da el mismo resultado) pero no necesariamente mejor
+- Los tres métodos coinciden en el **grado óptimo**
+
+---
+
+## Resumen del laboratorio
+
+| Concepto | Lo que aprendimos |
+|:---|:---|
+| Error de entrenamiento | Siempre baja con la complejidad — no sirve para elegir modelo |
+| Train/test | Estima el error de predicción, pero es muy variable |
+| K-fold CV | Promedia K estimaciones → más estable y eficiente |
+| Regla 1-SE | Preferir el modelo más simple dentro del margen de error |
+| LOO-CV | Se calcula gratis para modelos lineales con la fórmula del leverage |
+| Sesgo-varianza | Verificado empíricamente: EPE = Sesgo² + Varianza + σ² |

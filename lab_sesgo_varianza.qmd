@@ -1,0 +1,521 @@
+---
+title: "Laboratorio: Sobreajuste, Sesgo-Varianza y Validación Cruzada"
+subtitle: "Clase de Grado — IESTA, FCEA, UDELAR"
+author: "Mauro Loprete"
+date: '2026-06-17'
+quarto-required: ">=1.3.0"
+lang: es
+format:
+    html:
+        code-fold: true
+        code-summary: "Ver el código"
+        toc: true
+        page-layout: full
+        embed-resources: true
+        self-contained-math: true
+        html-math-method: katex
+        fig-height: 6
+        fig-width: 9
+execute:
+  warning: false
+  message: false
+---
+
+```{r setup}
+#| include: false
+library(ggplot2)
+library(dplyr)
+library(ISLR)
+library(boot)
+
+theme_set(theme_minimal(base_size = 14))
+```
+
+## Objetivos
+
+En este laboratorio vamos a:
+
+1. **Visualizar** el sobreajuste ajustando modelos polinomiales de distinto grado
+2. **Implementar** la partición train/test y observar su variabilidad
+3. **Aplicar** validación cruzada K-fold para seleccionar la complejidad del modelo
+4. **Verificar** empíricamente la descomposición sesgo-varianza mediante simulación Monte Carlo
+
+Trabajaremos con el dataset `Auto` del paquete `ISLR`, que contiene información sobre 392 vehículos.
+
+## Repaso de conceptos clave
+
+::: {.callout-note}
+## Ideas centrales de la clase
+
+**Sobreajuste**: Un modelo demasiado complejo memoriza el ruido de los datos de entrenamiento. El error de entrenamiento (MSE$_{\text{train}}$) siempre decrece con la complejidad, pero el error de predicción sobre datos nuevos (MSE$_{\text{test}}$) tiene forma de U.
+
+**Descomposición sesgo-varianza**: Para un punto $x_0$, el error esperado de predicción se descompone como:
+$$\text{EPE}(x_0) = \text{Sesgo}^2[\hat{f}(x_0)] + \text{Var}[\hat{f}(x_0)] + \sigma^2$$
+
+- *Sesgo*: error sistemático por usar un modelo demasiado simple (no captura la señal).
+- *Varianza*: inestabilidad del modelo ante distintas muestras de entrenamiento (sensibilidad al ruido).
+- *σ²*: ruido irreducible inherente a los datos.
+
+**Validación train/test**: Dividir los datos en entrenamiento y prueba permite estimar el error de predicción, pero la estimación tiene alta variabilidad según la partición elegida.
+
+**Validación cruzada K-fold**: Divide los datos en K grupos, entrena K veces dejando un grupo afuera cada vez, y promedia los errores. Reduce la variabilidad respecto a un único split train/test.
+
+**Regla del 1-SE**: Elegir el modelo más simple cuyo CV-error esté dentro de 1 error estándar del mínimo. Favorece la parsimonia.
+
+**LOO-CV para modelos lineales**: Se calcula con una sola pasada usando los leverages $h_{ii}$:
+$$\text{CV}_{(n)} = \frac{1}{n}\sum_{i=1}^n \left(\frac{y_i - \hat{y}_i}{1 - h_{ii}}\right)^2$$
+:::
+
+## Datos: Auto (ISLR)
+
+```{r}
+data(Auto)
+Auto <- Auto |> select(mpg, horsepower, weight, year, name)
+head(Auto, 8)
+```
+
+La variable respuesta es **`mpg`** (millas por galón — eficiencia de combustible) y la principal variable explicativa es **`horsepower`** (potencia del motor).
+
+```{r}
+ggplot(Auto, aes(x = horsepower, y = mpg)) +
+  geom_point(alpha = 0.5, color = "#64748b") +
+  labs(x = "Potencia (HP)", y = "Consumo (MPG)",
+       title = "Relación entre potencia y consumo") +
+  geom_smooth(method = "loess", se = FALSE, color = "#D55E00",
+              linetype = "dashed", linewidth = 1)
+```
+
+La relación es claramente **no lineal**: a medida que la potencia crece, el consumo baja, pero con rendimientos decrecientes.
+
+---
+
+## Ejercicio 1: Visualizando el sobreajuste
+
+### 1.1 Ajuste polinomios de grado 1, 2, 4, 10 y 20 a la relación `mpg ~ horsepower`. Grafique los ajustes superpuestos a los datos.
+
+::: {.callout-tip collapse="true"}
+## Pista
+Use `lm(mpg ~ poly(horsepower, degree), data = Auto)` para ajustar polinomios ortogonales. Para graficar, genere predicciones sobre una grilla fina de valores de `horsepower`.
+:::
+
+```{r}
+#| attr-output: '.details summary="Ver solución"'
+
+grados <- c(1, 2, 4, 10, 20)
+hp_grid <- data.frame(horsepower = seq(min(Auto$horsepower),
+                                        max(Auto$horsepower),
+                                        length.out = 300))
+
+df_preds <- lapply(grados, function(d) {
+  fit <- lm(mpg ~ poly(horsepower, d), data = Auto)
+  data.frame(horsepower = hp_grid$horsepower,
+             mpg = predict(fit, newdata = hp_grid),
+             Grado = paste("Grado", d))
+}) |> bind_rows()
+
+df_preds$Grado <- factor(df_preds$Grado,
+  levels = paste("Grado", grados))
+
+ggplot() +
+  geom_point(data = Auto, aes(horsepower, mpg),
+             alpha = 0.4, color = "#64748b", size = 1.5) +
+  geom_line(data = df_preds, aes(horsepower, mpg, color = Grado),
+            linewidth = 1.1) +
+  scale_color_manual(values = c("#0072B2", "#009E73", "#E69F00",
+                                "#D55E00", "#7b2cbf")) +
+  labs(x = "Potencia (HP)", y = "MPG",
+       title = "Ajustes polinomiales de distinto grado")
+```
+
+### 1.2 Calcule el error de entrenamiento (MSE) para cada grado. ¿Qué observa al aumentar el grado?
+
+```{r}
+#| attr-output: '.details summary="Ver solución"'
+
+train_mse <- sapply(1:20, function(d) {
+  fit <- lm(mpg ~ poly(horsepower, d), data = Auto)
+  mean(residuals(fit)^2)
+})
+
+data.frame(grado = 1:20, MSE_train = train_mse) |>
+  ggplot(aes(grado, MSE_train)) +
+  geom_line(linewidth = 1.2, color = "#0072B2") +
+  geom_point(size = 2.5, color = "#0072B2") +
+  labs(x = "Grado del polinomio", y = "MSE de entrenamiento",
+       title = "El error de entrenamiento siempre decrece con la complejidad") +
+  annotate("text", x = 15, y = max(train_mse) * 0.8,
+           label = "¡Pero esto NO significa\nque el modelo sea mejor!",
+           color = "#D55E00", size = 5, fontface = "italic")
+```
+
+**Observación**: El MSE de entrenamiento decrece monótonamente. Si usáramos solo este criterio, siempre elegiríamos el modelo más complejo — lo cual lleva al sobreajuste.
+
+---
+
+## Ejercicio 2: Partición Train/Test
+
+### 2.1 Divida los datos aleatoriamente en 70% entrenamiento y 30% test. Ajuste polinomios de grado 1 a 15 y calcule el MSE de entrenamiento y de test para cada grado.
+
+```{r}
+#| attr-output: '.details summary="Ver solución"'
+
+set.seed(42)
+n <- nrow(Auto)
+idx_train <- sample(n, size = round(0.7 * n))
+train <- Auto[idx_train, ]
+test  <- Auto[-idx_train, ]
+
+grados_eval <- 1:15
+mse_tt <- sapply(grados_eval, function(d) {
+  fit <- lm(mpg ~ poly(horsepower, d), data = train)
+  c(train = mean(residuals(fit)^2),
+    test  = mean((test$mpg - predict(fit, newdata = test))^2))
+})
+
+df_tt <- data.frame(
+  grado = rep(grados_eval, 2),
+  MSE = c(mse_tt["train", ], mse_tt["test", ]),
+  Conjunto = rep(c("Entrenamiento", "Test"), each = length(grados_eval))
+)
+
+ggplot(df_tt, aes(grado, MSE, color = Conjunto)) +
+  geom_line(linewidth = 1.3) +
+  geom_point(size = 2.5) +
+  scale_color_manual(values = c("#56B4E9", "#D55E00")) +
+  labs(x = "Grado del polinomio", y = "MSE",
+       title = "MSE de entrenamiento vs. test",
+       subtitle = "El error de test tiene forma de U — indica el grado óptimo")
+```
+
+### 2.2 Repita la partición train/test 20 veces con distintas semillas. Grafique las 20 curvas de test MSE superpuestas. ¿Qué observa?
+
+```{r}
+#| attr-output: '.details summary="Ver solución"'
+
+n_reps <- 20
+df_reps <- lapply(1:n_reps, function(r) {
+  idx <- sample(n, round(0.7 * n))
+  tr <- Auto[idx, ]; te <- Auto[-idx, ]
+  mse_test <- sapply(grados_eval, function(d) {
+    fit <- lm(mpg ~ poly(horsepower, d), data = tr)
+    mean((te$mpg - predict(fit, newdata = te))^2)
+  })
+  data.frame(grado = grados_eval, test_mse = mse_test, rep = r)
+}) |> bind_rows()
+
+ggplot(df_reps, aes(grado, test_mse, group = rep, color = factor(rep))) +
+  geom_line(linewidth = 0.8, show.legend = FALSE) +
+  labs(x = "Grado del polinomio", y = "MSE en test",
+       title = "20 particiones train/test distintas",
+       subtitle = "Problema: el grado 'óptimo' varía según la partición aleatoria") +
+  coord_cartesian(ylim = c(15, 35))
+```
+
+**Conclusión**: La estimación del error de test depende mucho de **qué observaciones** caen en cada conjunto. Esto motiva el uso de validación cruzada.
+
+---
+
+## Ejercicio 3: Validación Cruzada K-fold
+
+### 3.1 Implemente manualmente 10-fold CV para seleccionar el grado del polinomio.
+
+::: {.callout-tip collapse="true"}
+## Pista
+Cree los folds con `folds <- sample(rep(1:K, length.out = n))`. Luego itere sobre cada fold, ajuste con los datos fuera del fold, y evalúe en el fold.
+:::
+
+```{r}
+#| attr-output: '.details summary="Ver solución"'
+
+set.seed(2026)
+K <- 10
+folds <- sample(rep(1:K, length.out = n))
+
+cv_manual <- sapply(grados_eval, function(d) {
+  mse_k <- sapply(1:K, function(k) {
+    tr <- Auto[folds != k, ]
+    te <- Auto[folds == k, ]
+    fit <- lm(mpg ~ poly(horsepower, d), data = tr)
+    mean((te$mpg - predict(fit, newdata = te))^2)
+  })
+  c(mean = mean(mse_k), se = sd(mse_k) / sqrt(K))
+})
+
+cv_df <- data.frame(grado = grados_eval,
+                    cv_mean = cv_manual["mean", ],
+                    cv_se = cv_manual["se", ])
+
+mejor <- cv_df$grado[which.min(cv_df$cv_mean)]
+
+ggplot(cv_df, aes(grado, cv_mean)) +
+  geom_ribbon(aes(ymin = cv_mean - cv_se, ymax = cv_mean + cv_se),
+              alpha = 0.15, fill = "#0072B2") +
+  geom_line(linewidth = 1.3, color = "#0072B2") +
+  geom_point(size = 3, color = "#0072B2") +
+  geom_point(data = cv_df[cv_df$grado == mejor, ], size = 6,
+             color = "#D55E00", shape = 18) +
+  labs(x = "Grado del polinomio", y = "10-fold CV MSE ± 1 SE",
+       title = paste0("10-fold CV: el mínimo está en grado ", mejor))
+```
+
+### 3.2 Verifique su resultado usando la función `cv.glm()` del paquete `boot`.
+
+```{r}
+#| attr-output: '.details summary="Ver solución"'
+
+cv_boot <- sapply(grados_eval, function(d) {
+  fit <- glm(mpg ~ poly(horsepower, d), data = Auto)
+  cv_res <- cv.glm(Auto, fit, K = 10)
+  cv_res$delta[1]  # error CV ajustado
+})
+
+# Comparar
+comparacion <- data.frame(
+  grado = grados_eval,
+  cv_manual = cv_df$cv_mean,
+  cv_boot = cv_boot
+)
+
+cat("Grado óptimo (manual):", which.min(comparacion$cv_manual), "\n")
+cat("Grado óptimo (cv.glm):", which.min(comparacion$cv_boot), "\n")
+```
+
+### 3.3 Aplique la regla del 1-SE. ¿Qué modelo selecciona?
+
+```{r}
+#| attr-output: '.details summary="Ver solución"'
+
+umbral_1se <- min(cv_df$cv_mean) + cv_df$cv_se[which.min(cv_df$cv_mean)]
+modelo_1se <- min(cv_df$grado[cv_df$cv_mean <= umbral_1se])
+
+ggplot(cv_df, aes(grado, cv_mean)) +
+  geom_ribbon(aes(ymin = cv_mean - cv_se, ymax = cv_mean + cv_se),
+              alpha = 0.12, fill = "#0072B2") +
+  geom_line(linewidth = 1.1, color = "#0072B2") +
+  geom_point(size = 2.5, color = "#0072B2") +
+  geom_hline(yintercept = umbral_1se, linetype = "dashed",
+             color = "#E69F00", linewidth = 0.9) +
+  geom_point(data = cv_df[cv_df$grado == mejor, ],
+             size = 5, color = "#D55E00", shape = 18) +
+  geom_point(data = cv_df[cv_df$grado == modelo_1se, ],
+             size = 5, color = "#009E73", shape = 18) +
+  annotate("text", x = 12, y = umbral_1se + 0.3,
+           label = "Umbral 1-SE", color = "#E69F00", size = 5) +
+  labs(x = "Grado del polinomio", y = "CV MSE",
+       title = paste0("Regla 1-SE: selecciona grado ", modelo_1se,
+                      " (vs. CV mín en grado ", mejor, ")"),
+       subtitle = "El modelo más simple cuyo error está dentro del umbral")
+
+cat("Modelo CV mínimo: grado", mejor, "\n")
+cat("Modelo 1-SE:      grado", modelo_1se, "\n")
+cat("Preferimos grado", modelo_1se, "por parsimonia.\n")
+```
+
+---
+
+## Ejercicio 4: LOO-CV y la fórmula del leverage
+
+### 4.1 Calcule el LOO-CV para el modelo cuadrático usando la fórmula:
+
+$$\text{CV}_{(n)} = \frac{1}{n}\sum_{i=1}^n \left(\frac{y_i - \hat{y}_i}{1 - h_{ii}}\right)^2$$
+
+donde $h_{ii}$ es el leverage de la observación $i$.
+
+```{r}
+#| attr-output: '.details summary="Ver solución"'
+
+fit_quad <- lm(mpg ~ poly(horsepower, 2), data = Auto)
+
+# Extraer leverage y residuos
+h <- hatvalues(fit_quad)
+residuos <- residuals(fit_quad)
+
+# Fórmula mágica LOO
+loo_formula <- mean((residuos / (1 - h))^2)
+
+# Verificar con cv.glm (K = n)
+loo_boot <- cv.glm(Auto, glm(mpg ~ poly(horsepower, 2), data = Auto),
+                   K = nrow(Auto))$delta[1]
+
+cat("LOO-CV (fórmula leverage):", round(loo_formula, 4), "\n")
+cat("LOO-CV (cv.glm, K = n):   ", round(loo_boot, 4), "\n")
+cat("Diferencia:", round(abs(loo_formula - loo_boot), 6), "(≈ 0)\n")
+```
+
+**Observación**: La fórmula del leverage da **exactamente** el mismo resultado que reajustar el modelo $n$ veces, pero en una sola operación.
+
+### 4.2 Grafique los leverage $h_{ii}$ vs. `horsepower`. ¿Qué observaciones tienen más influencia?
+
+```{r}
+#| attr-output: '.details summary="Ver solución"'
+
+Auto$leverage <- h
+Auto$loo_contrib <- (residuos / (1 - h))^2
+
+ggplot(Auto, aes(horsepower, leverage)) +
+  geom_point(aes(size = loo_contrib), alpha = 0.5, color = "#0072B2") +
+  geom_hline(yintercept = 2 * 3 / n, linetype = "dashed", color = "#D55E00") +
+  annotate("text", x = 200, y = 2 * 3 / n + 0.003,
+           label = "Umbral 2(p+1)/n", color = "#D55E00", size = 4) +
+  labs(x = "Potencia (HP)", y = expression(h[ii]),
+       title = "Leverage por observación",
+       subtitle = "Tamaño del punto = contribución al LOO-CV",
+       size = "Contribución\nLOO") +
+  scale_size_continuous(range = c(1, 6))
+
+# Limpiar
+Auto$leverage <- NULL
+Auto$loo_contrib <- NULL
+```
+
+---
+
+## Ejercicio 5: Simulación Monte Carlo del trade-off sesgo-varianza
+
+### 5.1 Genere datos con una función verdadera conocida y verifique empíricamente la descomposición $\text{EPE} = \text{Sesgo}^2 + \text{Varianza} + \sigma^2$.
+
+Usaremos $f(x) = \sin(2\pi x)$ con $\sigma = 0.3$ y $n = 50$.
+
+```{r}
+#| attr-output: '.details summary="Ver solución"'
+
+# Parámetros
+f_true <- function(x) sin(2 * pi * x)
+sigma <- 0.3
+n_obs <- 50
+n_sims <- 200
+grados_sim <- 1:15
+x_eval <- seq(0.05, 0.95, length.out = 60)
+f_eval <- f_true(x_eval)
+
+# Simulación: generar n_sims muestras y ajustar cada grado
+preds <- array(NA, dim = c(n_sims, length(x_eval), length(grados_sim)))
+
+set.seed(2026)
+for (s in 1:n_sims) {
+  x_s <- sort(runif(n_obs, 0, 1))
+  y_s <- f_true(x_s) + rnorm(n_obs, sd = sigma)
+  for (di in seq_along(grados_sim)) {
+    fit <- lm(y_s ~ poly(x_s, grados_sim[di]))
+    preds[s, , di] <- predict(fit, newdata = data.frame(x_s = x_eval))
+  }
+}
+
+# Calcular descomposición
+decomp <- data.frame(grado = grados_sim, sesgo2 = NA, varianza = NA, epe = NA)
+for (di in seq_along(grados_sim)) {
+  mu_hat <- colMeans(preds[, , di])           # E[f_hat(x)]
+  decomp$sesgo2[di]   <- mean((mu_hat - f_eval)^2)
+  decomp$varianza[di] <- mean(apply(preds[, , di], 2, var))
+  decomp$epe[di]      <- decomp$sesgo2[di] + decomp$varianza[di] + sigma^2
+}
+
+# Graficar
+decomp |>
+  tidyr::pivot_longer(-grado, names_to = "Componente", values_to = "Valor") |>
+  mutate(Componente = factor(Componente,
+    levels = c("epe", "sesgo2", "varianza"),
+    labels = c("EPE total", "Sesgo²", "Varianza"))) |>
+  ggplot(aes(grado, Valor, color = Componente)) +
+  geom_line(linewidth = 1.4) +
+  geom_point(size = 2.5) +
+  geom_hline(yintercept = sigma^2, linetype = "dashed", color = "gray50") +
+  annotate("text", x = 13, y = sigma^2 + 0.01,
+           label = expression(sigma^2 ~ "(irreducible)"),
+           color = "gray50", size = 4.5) +
+  scale_color_manual(values = c("#009E73", "#0072B2", "#E69F00")) +
+  labs(x = "Grado del polinomio (complejidad)", y = "Error",
+       title = "Descomposición empírica del EPE",
+       subtitle = paste0(n_sims, " simulaciones Monte Carlo, n = ", n_obs,
+                         ", f(x) = sin(2\u03c0x)"))
+```
+
+### 5.2 Verifique que EPE ≈ Sesgo² + Varianza + σ² numéricamente.
+
+```{r}
+#| attr-output: '.details summary="Ver solución"'
+
+decomp |>
+  mutate(
+    irreducible = sigma^2,
+    suma = sesgo2 + varianza + irreducible
+  ) |>
+  select(grado, sesgo2, varianza, irreducible, epe, suma) |>
+  head(10) |>
+  knitr::kable(digits = 4,
+               col.names = c("Grado", "Sesgo²", "Varianza",
+                             "σ²", "EPE", "Sesgo²+Var+σ²"))
+```
+
+**Verificación**: La columna EPE coincide exactamente con Sesgo² + Varianza + σ², confirmando empíricamente el teorema de descomposición.
+
+---
+
+## Ejercicio 6 (Bonus): Comparación K=5 vs K=10 vs LOO
+
+### 6.1 Para el dataset Auto, compare la estimación del error de predicción usando K=5, K=10 y LOO para polinomios de grado 1 a 10. Repita cada CV 30 veces y compare la variabilidad.
+
+```{r}
+#| attr-output: '.details summary="Ver solución"'
+
+grados_comp <- 1:10
+n_rep_cv <- 30
+
+run_cv <- function(K_val, datos, grados, n_reps) {
+  replicate(n_reps, {
+    sapply(grados, function(d) {
+      fit <- glm(mpg ~ poly(horsepower, d), data = datos)
+      cv.glm(datos, fit, K = K_val)$delta[1]
+    })
+  })
+}
+
+set.seed(123)
+cv5  <- run_cv(5, Auto, grados_comp, n_rep_cv)
+cv10 <- run_cv(10, Auto, grados_comp, n_rep_cv)
+
+# LOO no tiene variabilidad (determinístico), se calcula una vez
+cv_loo <- sapply(grados_comp, function(d) {
+  fit <- glm(mpg ~ poly(horsepower, d), data = Auto)
+  cv.glm(Auto, fit, K = nrow(Auto))$delta[1]
+})
+
+df_comp <- bind_rows(
+  data.frame(grado = rep(grados_comp, n_rep_cv),
+             cv = as.vector(t(cv5)), K = "K = 5"),
+  data.frame(grado = rep(grados_comp, n_rep_cv),
+             cv = as.vector(t(cv10)), K = "K = 10")
+)
+
+ggplot(df_comp, aes(grado, cv, color = K)) +
+  geom_jitter(alpha = 0.3, width = 0.1, size = 1) +
+  stat_summary(fun = mean, geom = "line", linewidth = 1.2) +
+  geom_line(data = data.frame(grado = grados_comp, cv = cv_loo, K = "LOO"),
+            aes(grado, cv), linewidth = 1.2, linetype = "dashed") +
+  scale_color_manual(values = c("#D55E00", "#0072B2", "#009E73")) +
+  labs(x = "Grado del polinomio", y = "CV MSE",
+       title = "Comparación K=5 vs K=10 vs LOO",
+       subtitle = "Puntos = repeticiones individuales. LOO (verde punteado) es determinístico.") +
+  annotate("text", x = 8, y = cv_loo[8] - 0.3, label = "LOO",
+           color = "#009E73", size = 5, fontface = "bold")
+```
+
+**Observaciones**:
+
+- K=5 tiene **más variabilidad** entre repeticiones (folds más pequeños, más aleatorios)
+- K=10 es más **estable**
+- LOO es determinístico (siempre da el mismo resultado) pero no necesariamente mejor
+- Los tres métodos coinciden en el **grado óptimo**
+
+---
+
+## Resumen del laboratorio
+
+| Concepto | Lo que aprendimos |
+|:---|:---|
+| Error de entrenamiento | Siempre baja con la complejidad — no sirve para elegir modelo |
+| Train/test | Estima el error de predicción, pero es muy variable |
+| K-fold CV | Promedia K estimaciones → más estable y eficiente |
+| Regla 1-SE | Preferir el modelo más simple dentro del margen de error |
+| LOO-CV | Se calcula gratis para modelos lineales con la fórmula del leverage |
+| Sesgo-varianza | Verificado empíricamente: EPE = Sesgo² + Varianza + σ² |

@@ -1,0 +1,165 @@
+/*-- scss:defaults --*/
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* Paleta institucional FCEA / UDELAR */
+$fcea-rojo: #ea504c;
+$fcea-rojo-oscuro: #c0392b;
+$fcea-beige: #ccc2b0;
+$fcea-negro: #111111;
+
+$background-color: #FFFFFF;
+$text-color: #1e293b;
+$primary-color: $fcea-rojo-oscuro;
+$accent-color: $fcea-rojo;
+$font-family: 'Inter', -apple-system, sans-serif;
+$code-font: 'JetBrains Mono', monospace;
+
+$base-font-size: 28px;
+$heading1-size: 48px;
+$heading2-size: 36px;
+$heading3-size: 30px;
+
+/*-- scss:rules --*/
+.reveal {
+    background-color: $background-color;
+    color: $text-color;
+    font-family: $font-family;
+    font-size: $base-font-size;
+    font-weight: 400;
+
+    /* Logo FCEA en esquina superior derecha */
+    .slide-logo {
+        position: fixed;
+        top: 12px;
+        right: 16px;
+        height: 36px;
+        z-index: 100;
+    }
+
+    h1 {
+        color: $primary-color;
+        font-size: $heading1-size;
+        font-weight: 700;
+        text-transform: none;
+        letter-spacing: -0.5px;
+        border-bottom: 3px solid $accent-color;
+        padding-bottom: 0.3em;
+    }
+
+    h2 {
+        color: $primary-color;
+        font-size: $heading2-size;
+        font-weight: 600;
+        margin-bottom: 0.5em;
+    }
+
+    h3 {
+        color: $text-color;
+        font-size: $heading3-size;
+        font-weight: 500;
+    }
+
+    p, ul, ol {
+        font-size: $base-font-size;
+        line-height: 1.6;
+        max-width: 100%;
+    }
+
+    li {
+        margin-bottom: 0.3em;
+    }
+
+    a {
+        color: $primary-color;
+        font-weight: 500;
+        text-decoration: none;
+        border-bottom: 1px solid lighten($primary-color, 30%);
+    }
+
+    /* Código legible */
+    pre {
+        background-color: #fafafa;
+        border: 1px solid #e2e8f0;
+        border-left: 4px solid $accent-color;
+        font-family: $code-font;
+        font-size: 20px;
+        line-height: 1.5;
+        padding: 16px 20px;
+        border-radius: 6px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+
+    code {
+        font-family: $code-font;
+        font-size: 22px;
+        background-color: #f8f9fa;
+        padding: 2px 6px;
+        border-radius: 3px;
+    }
+
+    /* Tablas limpias con identidad FCEA */
+    table {
+        font-size: 24px;
+        border-collapse: collapse;
+        width: 100%;
+        margin: 1em 0;
+
+        th {
+            background-color: $primary-color;
+            color: white;
+            font-weight: 600;
+            padding: 10px 16px;
+            text-align: left;
+        }
+
+        td {
+            padding: 8px 16px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        tr:nth-child(even) td {
+            background-color: #faf9f7;
+        }
+    }
+
+    /* Callouts */
+    .callout {
+        border-radius: 8px;
+        margin: 1em 0;
+        font-size: 26px;
+    }
+
+    /* Slides de sección con color FCEA */
+    section[data-background-color="#2c3e50"] {
+        h1, h2 {
+            color: white !important;
+            border-bottom-color: $accent-color !important;
+        }
+    }
+
+    /* MathJax */
+    .MathJax {
+        font-size: 105% !important;
+    }
+
+    /* Slide number */
+    .slide-number {
+        font-size: 14px;
+        color: #94a3b8;
+    }
+
+    /* Fragments */
+    .fragment {
+        transition: opacity 0.3s ease;
+    }
+
+    /* Title slide branding */
+    .title-slide {
+        h1.title {
+            border-bottom-color: $accent-color;
+        }
+        .subtitle {
+            color: #64748b;
+        }
+    }
+}

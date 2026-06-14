@@ -1,0 +1,4 @@
+*_files/
+*_cache/
+.DS_Store
+*.knit.md
