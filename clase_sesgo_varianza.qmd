@@ -20,7 +20,7 @@ format:
     code-line-numbers: false
     fig-align: center
 author: "Mauro Loprete"
-institute: "IESTA — Facultad de Ciencias Económicas y de Administración — UDELAR"
+institute: "UAEE — Facultad de Ciencias Económicas y de Administración — UDELAR"
 date: "2026-06-17"
 execute:
   echo: false
