@@ -122,7 +122,7 @@ Tenemos $n$ observaciones $(x_1, y_1), \ldots, (x_n, y_n)$ y queremos construir 
 
 ::: {.callout-warning}
 ## Advertencia
-Un modelo puede ajustar **perfectamente** los datos de entrenamiento y aun así predecir **pésimamente** datos nuevos.
+Un modelo puede ajustar **perfectamente** los datos de entrenamiento y aun así predecir **mal** datos nuevos.
 :::
 
 ---
@@ -310,7 +310,7 @@ pivot_longer(res1, c(train, test), names_to = "Tipo", values_to = "MSE") |>
     labs(
         x = "Flexibilidad (grados de libertad del spline)",
         y = "Error cuadrático medio",
-        title = "Escenario 1: f verdadera casi lineal",
+        title = expression("Escenario 1: " * f(x) == 0.8*x + 0.2 * sin(2*pi*x)),
         subtitle = "Óptimo con baja flexibilidad — más complejidad solo agrega varianza"
     ) +
     coord_cartesian(ylim = c(0, max(res1$test) * 0.85))
@@ -345,7 +345,7 @@ pivot_longer(res2, c(train, test), names_to = "Tipo", values_to = "MSE") |>
     labs(
         x = "Flexibilidad (grados de libertad del spline)",
         y = "Error cuadrático medio",
-        title = "Escenario 2: f verdadera moderadamente no lineal",
+        title = expression("Escenario 2: " * f(x) == sin(2*pi*x)),
         subtitle = "El mínimo del test MSE ocurre con flexibilidad intermedia"
     ) +
     coord_cartesian(ylim = c(0, max(res2$test) * 0.7))
@@ -380,7 +380,7 @@ pivot_longer(res3, c(train, test), names_to = "Tipo", values_to = "MSE") |>
     labs(
         x = "Flexibilidad (grados de libertad del spline)",
         y = "Error cuadrático medio",
-        title = "Escenario 3: f verdadera altamente no lineal",
+        title = expression("Escenario 3: " * f(x) == sin(4*pi*x) * e^{-2*x} + 0.5*x^2),
         subtitle = "Necesita alta flexibilidad — el mínimo está más a la derecha"
     ) +
     coord_cartesian(ylim = c(0, max(res3$test) * 0.6))
@@ -720,54 +720,11 @@ Si usás los datos de test para tomar decisiones, **dejan de ser datos de test**
 
 ---
 
-## Ejemplo en R
-
-```{r train-test-code}
-# Generar datos
-set.seed(123)
-n <- 80
-x <- sort(runif(n, 0, 1))
-y <- f2(x) + rnorm(n, sd = 0.25)
-
-# Partición 70/30
-idx_train <- sample(n, size = 0.7 * n)
-train <- data.frame(x = x[idx_train], y = y[idx_train])
-test <- data.frame(x = x[-idx_train], y = y[-idx_train])
-
-# Evaluar smoothing splines con distinta flexibilidad
-df_grid <- seq(2, 20, by = 1)
-mse <- sapply(df_grid, function(d) {
-    fit <- smooth.spline(train$x, train$y, df = d)
-    c(
-        train = mean((train$y - predict(fit, train$x)$y)^2),
-        test = mean((test$y - predict(fit, test$x)$y)^2)
-    )
-})
-```
-
-```{r train-test-plot, fig.height=4.2}
-data.frame(
-    df = rep(df_grid, 2),
-    MSE = c(mse["train", ], mse["test", ]),
-    Conjunto = rep(c("Entrenamiento", "Test"), each = length(df_grid))
-) |>
-    ggplot(aes(df, MSE, color = Conjunto)) +
-    geom_line(linewidth = 1.4) +
-    geom_point(size = 2.5) +
-    scale_color_manual(values = c(col_train, col_test)) +
-    labs(
-        x = "Flexibilidad (df)",
-        y = "ECM",
-        title = "Selección de modelo con partición train/test"
-    )
-```
-
----
-
 ## Problema: alta variabilidad (ISLR, Fig. 5.2)
 
 ```{r variabilidad-tt, fig.height=5.5}
 # Replicar ISLR Figure 5.2: muchas particiones train/test distintas
+df_grid <- seq(2, 20, by = 1)
 n_reps <- 15
 x_full <- sort(runif(100, 0, 1))
 y_full <- f2(x_full) + rnorm(100, sd = sigma_eps)
